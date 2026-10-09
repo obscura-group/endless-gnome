@@ -1,0 +1,36 @@
+[gd_scene format=3 uid="uid://djqmnnq2maksr"]
+
+[ext_resource type="Texture2D" uid="uid://cntudm0vlx41n" path="res://icon.svg" id="1_cu7im"]
+[ext_resource type="PackedScene" uid="uid://cwjehfragr4fb" path="res://scenes/player/Player.tscn" id="2_hk4qm"]
+[ext_resource type="Script" uid="uid://bjvftn5m2t67u" path="res://scenes/levels/void_tp.gd" id="3_f2lm1"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_g4v7s"]
+size = Vector2(1154.5, 103)
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_57qmd"]
+size = Vector2(2324, 16)
+
+[node name="Node2D" type="Node2D" unique_id=437509901]
+
+[node name="StaticBody2D" type="StaticBody2D" parent="." unique_id=1500456758]
+position = Vector2(0, 9)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="StaticBody2D" unique_id=1221436505]
+position = Vector2(576, 370)
+shape = SubResource("RectangleShape2D_g4v7s")
+
+[node name="Sprite2D" type="Sprite2D" parent="StaticBody2D" unique_id=1001488857]
+position = Vector2(572.5, 375)
+scale = Vector2(9.0078125, 0.90624994)
+texture = ExtResource("1_cu7im")
+
+[node name="CharacterBody2D" parent="." unique_id=1642388073 instance=ExtResource("2_hk4qm")]
+position = Vector2(216, 285)
+
+[node name="VoidTP" type="Area2D" parent="." unique_id=1005895730]
+position = Vector2(559, 525)
+script = ExtResource("3_f2lm1")
+
+[node name="HitboxVoid" type="CollisionShape2D" parent="VoidTP" unique_id=1610769590]
+position = Vector2(-35, -2)
+shape = SubResource("RectangleShape2D_57qmd")
