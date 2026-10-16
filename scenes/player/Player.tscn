@@ -3,7 +3,7 @@
 [ext_resource type="Script" uid="uid://p4mresj88cjp" path="res://scenes/player/Player.gd" id="1_ky53y"]
 [ext_resource type="Texture2D" uid="uid://cntudm0vlx41n" path="res://icon.svg" id="2_bvqhm"]
 [ext_resource type="Texture2D" uid="uid://papvcb3ct2oy" path="res://assets/sprites/player/player_jump_placeholder.webp" id="2_c3xxp"]
-[ext_resource type="Texture2D" uid="uid://dbmpu73ghli7l" path="res://assets/sprites/player/crouch_placeholder.webp" id="2_tpg5x"]
+[ext_resource type="Texture2D" path="res://assets/sprites/player/crouch_placeholder.webp" id="2_tpg5x"]
 [ext_resource type="Texture2D" uid="uid://b8pmkldk2aofb" path="res://assets/sprites/player/fah.webp" id="3_4kuee"]
 [ext_resource type="Texture2D" uid="uid://dfl8sn43uh5a7" path="res://assets/sprites/player/player_roll_placeholder.webp" id="3_c3xxp"]
 
