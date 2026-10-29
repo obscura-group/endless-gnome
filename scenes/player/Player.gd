@@ -1,37 +1,50 @@
 extends CharacterBody2D
 
+# --- ANIMAÇÃO / VISUAL ---
+enum PlayerState {
+	attack,
+	duck,
+	idle,
+	jump,
+	rolling,
+	walk,
+}
+
+const ANIMATION_NAMES := {
+	PlayerState.attack: &"attack",
+	PlayerState.duck: &"duck",
+	PlayerState.idle: &"idle",
+	PlayerState.jump: &"jump",
+	PlayerState.rolling: &"rolling",
+	PlayerState.walk: &"walk",
+}
+
+@export var animation_switch: AnimatedSprite2D
+
 # --- PROPRIEDADES DE MOVIMENTO ---
+var direction = 0
 @export_group("Movimento Horizontal")
 @export var speed: float = 300.0
 @export var acceleration: float = 2400.0 # Velocidade de resposta ao acelerar
+
 
 @export_group("Pulo e Gravidade")
 @export var jump_velocity: float = -420.0
 @export var min_jump_velocity: float = -150.0
 @export var coyote_time: float = 0.15
 @export var jump_buffer_time: float = 0.1
-@export var jump_texture: Texture2D
 
 @export_group("Abaixar")
-## Altura da hitbox abaixado, em proporção da altura em pé (0.5 = metade)
 @export_range(0.2, 0.9) var crouch_height_ratio: float = 0.5
-## Sprite usado enquanto abaixado (se vazio, mantém o sprite normal)
-@export var crouch_texture: Texture2D
 
 @export_group("Rolada")
 @export var roll_speed: float = 450.0
 @export var roll_duration: float = 0.4
-## Tempo mínimo entre uma rolada e a próxima (contado a partir do início da rolada)
 @export var roll_cooldown: float = 2.0
-## Sprite usado durante a rolada (se vazio, volta para o sprite normal)
-@export var roll_texture: Texture2D
-## Transparência do jogador durante os i-frames (feedback visual)
 @export_range(0.0, 1.0) var roll_iframe_alpha: float = 0.5
 
 # --- REFERÊNCIAS DOS NÓS ---
-@onready var sprite_2d: Sprite2D = $PlayerSprite
 @onready var collision_shape: CollisionShape2D = $PlayerHurtBox # <- ajuste o nome se o seu for diferente
-@onready var attack_sprite: Sprite2D = $ActionSprite1
 @onready var attack_timer: Timer = $ActionCooldown1
 
 # Timers Internos
@@ -46,8 +59,8 @@ var is_invulnerable: bool = false # Use isso no seu sistema de dano (veja take_d
 var facing: int = 1               # 1 = direita, -1 = esquerda
 var roll_direction: int = 1
 
-var roll_timer: Timer             # Duração da rolada
-var roll_cooldown_timer: Timer    # Impede rolar de novo antes de passar o cooldown
+var roll_timer: Timer             # Duração da Rolada
+var roll_cooldown_timer: Timer    # Cooldown da Rolagem
 
 # Valores originais guardados no _ready
 var default_texture: Texture2D
@@ -55,26 +68,20 @@ var standing_height: float
 var crouch_height: float
 var standing_shape_pos_y: float
 
+# Última animação enviada ao sprite (evita reiniciar a animação a cada frame)
+var last_animation: StringName = &""
+
 
 func _ready() -> void:
-	# Garante que o ataque começa invisível
-	if attack_sprite:
-		attack_sprite.visible = false
-
-	# Conecta o sinal do Timer via código (ou faça pela aba Nós)
-	if attack_timer:
-		attack_timer.timeout.connect(_on_attack_timer_timeout)
-
-	# Duplica o shape para que mudar o tamanho não afete outras instâncias
 	collision_shape.shape = collision_shape.shape.duplicate()
 	standing_height = _get_shape_height()
 	crouch_height = standing_height * crouch_height_ratio
 	standing_shape_pos_y = collision_shape.position.y
-	default_texture = sprite_2d.texture
 
-	# Timers do roll criados por código (não precisa adicionar nós na cena)
 	roll_timer = _create_timer(roll_duration, _on_roll_finished)
 	roll_cooldown_timer = _create_timer(roll_cooldown)
+
+	_setup_animations()
 
 
 func _physics_process(delta: float) -> void:
@@ -82,13 +89,12 @@ func _physics_process(delta: float) -> void:
 	handle_jump_timers(delta)
 	handle_crouch()
 	handle_roll_input()
+	handle_attack_input()
 	handle_jump()
 	handle_horizontal_movement(delta)
-	handle_attack_input()
 	update_sprite_facing()
 	move_and_slide()
-	update_air_sprite()
-
+	update_animation() 
 
 # --- UTILIDADES ---
 func _create_timer(wait: float, callback: Callable = Callable()) -> Timer:
@@ -100,10 +106,59 @@ func _create_timer(wait: float, callback: Callable = Callable()) -> Timer:
 		t.timeout.connect(callback)
 	return t
 
+# --- ANIMAÇÕES ---
+func _setup_animations() -> void:
+	# O cooldown do ataque precisa ser one_shot para is_stopped() funcionar
+	attack_timer.one_shot = true
 
-func _set_sprite_texture(tex: Texture2D) -> void:
-	sprite_2d.texture = tex if tex else default_texture
+	# Se esqueceu de arrastar o nó no Inspector, tenta achar um AnimatedSprite2D filho
+	if animation_switch == null:
+		animation_switch = get_node_or_null("AnimatedSprite2D")
+	if animation_switch == null or animation_switch.sprite_frames == null:
+		push_warning("animation_switch sem AnimatedSprite2D/SpriteFrames: atribua o nó no Inspector.")
+		return
 
+	# O ataque termina quando a animação acaba, então ela não pode ficar em loop
+	var attack_anim: StringName = ANIMATION_NAMES[PlayerState.attack]
+	if animation_switch.sprite_frames.has_animation(attack_anim):
+		animation_switch.sprite_frames.set_animation_loop(attack_anim, false)
+
+	animation_switch.animation_finished.connect(_on_animation_finished)
+
+
+func get_current_state() -> PlayerState:
+	# A ordem importa: o primeiro que for verdadeiro vence
+	if is_rolling:
+		return PlayerState.rolling
+	if is_attacking:
+		return PlayerState.attack
+	if is_crouching:
+		return PlayerState.duck
+	if not is_on_floor():
+		return PlayerState.jump
+	if absf(velocity.x) > 0.0:
+		return PlayerState.walk
+	return PlayerState.idle
+
+
+func update_animation() -> void:
+	if animation_switch == null or animation_switch.sprite_frames == null:
+		return
+
+	var anim_name: StringName = ANIMATION_NAMES[get_current_state()]
+	if not animation_switch.sprite_frames.has_animation(anim_name):
+		push_warning("Animação não encontrada no SpriteFrames: " + String(anim_name))
+		return
+
+	# Só troca quando muda, senão a animação reiniciaria todo frame
+	if anim_name != last_animation:
+		animation_switch.play(anim_name)
+		last_animation = anim_name
+
+
+func _on_animation_finished() -> void:
+	if animation_switch.animation == ANIMATION_NAMES[PlayerState.attack]:
+		is_attacking = false
 
 # --- HITBOX ---
 func _get_shape_height() -> float:
@@ -148,13 +203,13 @@ func handle_crouch() -> void:
 func start_crouch() -> void:
 	is_crouching = true
 	_set_shape_height(crouch_height)
-	_set_sprite_texture(crouch_texture)
+
 
 
 func stop_crouch() -> void:
 	is_crouching = false
 	_set_shape_height(standing_height)
-	_set_sprite_texture(default_texture)
+
 
 
 # --- ROLADA ---
@@ -173,47 +228,37 @@ func start_roll() -> void:
 	roll_direction = facing
 	roll_timer.start()
 	roll_cooldown_timer.start() # Só libera outra rolada depois do cooldown
-	_set_sprite_texture(roll_texture)
-	sprite_2d.modulate.a = roll_iframe_alpha
 
 
 func _on_roll_finished() -> void:
 	is_rolling = false
 	is_invulnerable = false # i-frames desligados
-	sprite_2d.modulate.a = 1.0
-	# Volta para o sprite abaixado; se o jogador soltou "baixo", handle_crouch() o levanta
-	_set_sprite_texture(crouch_texture)
+
+
+
+# --- ATAQUE ---
+func handle_attack_input() -> void:
+	if Input.is_action_just_pressed("Acao1") \
+			and not is_attacking \
+			and not is_rolling \
+			and not is_crouching \
+			and attack_timer.is_stopped():
+		start_attack()
+
+
+func start_attack() -> void:
+	is_attacking = true
+	attack_timer.start() # Cooldown do ataque (tempo configurado no nó ActionCooldown1)
+	last_animation = &"" # Força a animação de ataque a recomeçar do primeiro frame
+	# O fim do ataque (is_attacking = false) vem de _on_animation_finished
 
 
 # --- DANO (exemplo de uso dos i-frames) ---
 func take_damage(amount: int) -> void:
 	if is_invulnerable:
 		return
-	# TODO: aplicar o dano de verdade aqui
+	# TODO: aplicar o dano de verdade aqui 
 	print("Jogador levou ", amount, " de dano")
-
-
-# --- LÓGICA DE ATAQUE / AÇÃO ---
-func handle_attack_input() -> void:
-	# Ativa ao apertar a tecla configurada (pode usar "ui_accept", "ui_select" ou criar "attack")
-	if Input.is_action_just_pressed("Acao1") and not is_attacking and not is_rolling:
-		perform_attack()
-
-
-func perform_attack() -> void:
-	is_attacking = true
-	attack_sprite.visible = true
-	attack_timer.start()
-
-	# Opcional: Adicionar um pequeno efeito visual com Tween (ex: escala rápida)
-	var tween = create_tween()
-	attack_sprite.scale = Vector2(0.5, 0.5)
-	tween.tween_property(attack_sprite, "scale", Vector2(1.2, 1.2), 0.1)
-
-
-func _on_attack_timer_timeout() -> void:
-	is_attacking = false
-	attack_sprite.visible = false
 
 
 # --- MOVIMENTO E FÍSICA ---
@@ -235,7 +280,7 @@ func handle_jump_timers(delta: float) -> void:
 
 
 func handle_jump() -> void:
-	# Não pula abaixado nem rolando
+	# Impede Pulos e Ataques
 	if jump_buffer_timer > 0.0 and coyote_timer > 0.0 and not is_crouching and not is_rolling:
 		velocity.y = jump_velocity
 		jump_buffer_timer = 0.0
@@ -244,22 +289,12 @@ func handle_jump() -> void:
 	if Input.is_action_just_released("ui_accept") and velocity.y < min_jump_velocity:
 		velocity.y = min_jump_velocity
 
-func update_air_sprite() -> void:
-	if is_crouching or is_rolling:
-		return
-
-	if is_on_floor():
-		_set_sprite_texture(default_texture)
-	else:
-		_set_sprite_texture(jump_texture)
 
 func handle_horizontal_movement(delta: float) -> void:
-	# Durante a rolada o jogador só vai pra frente, ignorando o input
 	if is_rolling:
 		velocity.x = roll_direction * roll_speed
 		return
 
-	# Abaixado fica parado (ainda pode virar de lado para escolher a direção da rolada)
 	if is_crouching:
 		velocity.x = 0.0
 		return
@@ -270,6 +305,7 @@ func handle_horizontal_movement(delta: float) -> void:
 	else:
 		velocity.x = 0.0
 
+# 👹
 
 func update_sprite_facing() -> void:
 	# Não vira no meio da rolada
@@ -277,16 +313,9 @@ func update_sprite_facing() -> void:
 		return
 
 	var direction := Input.get_axis("ui_left", "ui_right")
+	if direction != 0.0:
+		facing = 1 if direction > 0.0 else -1
 
-	if direction > 0.0:
-		facing = 1
-		sprite_2d.flip_h = false
-		# Reposiciona o ataque para a direita
-		attack_sprite.position.x = abs(attack_sprite.position.x)
-		attack_sprite.flip_h = false
-	elif direction < 0.0:
-		facing = -1
-		sprite_2d.flip_h = true
-		# Reposiciona o ataque para a esquerda
-		attack_sprite.position.x = -abs(attack_sprite.position.x)
-		attack_sprite.flip_h = true
+	# Considera que os sprites foram desenhados virados para a direita
+	if animation_switch != null:
+		animation_switch.flip_h = facing == -1
